@@ -136,7 +136,7 @@ view.innerHTML=
 '<div class="voice"><div class="eyebrow" style="color:#b8e7e9">CULTURAMED VOICE ASSISTANT</div>'+
 '<h2>Welcome to CulturaMed</h2>'+
 '<p>How can we help you today? Choose a service or listen to the welcome greeting.</p>'+
-'<div class="row"><button class="btn" onclick="speak(\'Welcome to CulturaMed Healthcare. How may we assist you today?\')">▶ Play Greeting</button>'+
+'<div class="row"><button class="btn" onclick="speak(&#39;Welcome to CulturaMed Healthcare. How may we assist you today?&#39;)">▶ Play Greeting</button>'+
 '<button class="btn alt" onclick="stopVoice()">■ Stop Voice</button></div></div>'+
 '<h2>Patient Services</h2><p class="muted">Select a service to continue.</p>'+
 '<div class="grid">'+
