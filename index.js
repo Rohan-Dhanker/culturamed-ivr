@@ -709,14 +709,25 @@ function renderClinic(){
  '<div class="grid grid-2"><section class="card"><div class="service-icon">⌖</div><h2>'+esc(c.clinicName||'CulturaMed Healthcare')+'</h2><p style="font-size:12px;margin:5px 0 18px">Clinic information</p><div class="detail-grid">'+detail('Country',c.country||'Not configured')+detail('Address',c.address||'Not configured')+detail('Contact number',c.phone||'Not configured')+detail('Email',c.email||'Not configured')+detail('Time zone',c.timezone||'UTC')+detail('Operating hours',c.operatingHours||'Not configured')+'</div></section><section class="card"><h2>Departments and services</h2><p style="font-size:11px;margin-bottom:15px">Configured departments</p><div class="settings-list">'+c.departments.map(d=>'<div class="info-strip"><span>✚</span><b>'+esc(d)+'</b></div>').join('')+'</div><h3 style="margin-top:22px">Appointment policy</h3><p style="font-size:12px;margin-top:7px">'+esc(c.appointmentPolicy||'Please contact the clinic for appointment policies.')+'</p></section></div>';
 }
 function detail(label,value){return '<div><small>'+esc(label)+'</small><strong>'+esc(value)+'</strong></div>';}
+
 function renderVoice(){
- return pageHead('Voice assistant and IVR','A browser-based guided service experience. This is not a telephone IVR and does not place or receive calls.')+
- '<section class="voice-panel"><div class="eyebrow" style="color:#70d1c7">CULTURAMED VOICE SERVICES</div><h2 style="color:white;font-size:22px;margin-top:8px">How may we assist you today?</h2><p style="font-size:12px;margin-top:5px">Choose an option below. You can also use keyboard shortcuts 1–6.</p><div class="ivr-options">'+
- ivr(1,'Book an appointment','booking')+ivr(2,'Manage an existing appointment','manage')+ivr(3,'Speak to reception','reception')+ivr(4,'Request patient follow-up','care')+ivr(5,'Clinic information','clinic')+ivr(6,'Repeat the menu','repeat')+
- '</div><div class="voice-state" id="voiceState" aria-live="polite">Ready. Select an option to continue.</div><div class="hero-actions"><button class="btn btn-primary" data-action="ivr-welcome">▶ Play welcome</button><button class="btn btn-soft" data-action="ivr-menu">▤ Hear menu</button><button class="btn btn-soft" data-action="stop-voice">■ Stop voice</button><button class="btn btn-soft" data-action="repeat-prompt">↻ Repeat prompt</button></div></section><div class="info-strip" style="margin-top:18px"><span>ⓘ</span><span>Voice playback depends on browser and device support. On-screen navigation remains available if speech features are unavailable.</span></div>';
+ return pageHead('Voice assistant and IVR','CulturaMed Healthcare — guided patient phone-menu demonstration.')+
+ '<section class="voice-panel"><div class="eyebrow" style="color:#70d1c7">CULTURAMED VOICE SERVICES</div><h2 style="color:white;font-size:22px;margin-top:8px">Welcome to CulturaMed Healthcare</h2><p style="font-size:13px;margin-top:8px">How can we help you today? Select an option below.</p><div class="ivr-options">'+
+ ivr(1,'Appointment Booking','booking')+
+ ivr(2,'Existing Appointment Check','manage')+
+ ivr(3,'Talk to Doctor / Reception','reception')+
+ ivr(4,'Clinic Information','clinic')+
+ '</div><div class="voice-state" id="voiceState" aria-live="polite">Welcome to CulturaMed Healthcare. Please select an option from 1 to 4.</div><div class="hero-actions"><button class="btn btn-primary" data-action="ivr-welcome">▶ Play welcome</button><button class="btn btn-soft" data-action="ivr-menu">▤ Hear menu</button><button class="btn btn-soft" data-action="stop-voice">■ Stop voice</button><button class="btn btn-soft" data-action="repeat-prompt">↻ Repeat prompt</button></div></section><div class="info-strip" style="margin-top:18px"><span>ⓘ</span><span>Browser-based IVR demonstration. Actual incoming telephone calls require an active phone number and telephony service.</span></div>';
 }
+
 function ivr(n,label,target){return '<button class="ivr-option" data-ivr="'+n+'"><span class="ivr-number">'+n+'</span><b>'+label+'</b></button>';}
-function menuText(){return 'Welcome to CulturaMed Healthcare. For a new appointment, select one. For an existing appointment, select two. For reception assistance, select three. For patient follow-up, select four. For clinic information, select five. To hear these options again, select six.';}
+
+
+
+function menuText(){return 'Welcome to CulturaMed Healthcare. For appointment booking, press one. To check an existing appointment, press two. To talk to a doctor or reception, press three. For clinic information, press four.';}
+
+
+
 function setVoiceState(text){const el=$('#voiceState');if(el)el.textContent=text;state.voiceText=text;}
 function renderAdmin(){
  if(!state.admin)return pageHead('Administration dashboard','Authorized administrative access is required to review patient service records.')+
@@ -798,7 +809,27 @@ function bindNavigation(){
    if(name==='admin-search'){state.adminFilter=$('#adminSearch').value;loadAdminRecords();}
    if(name==='admin-logout'){try{await api('/api/admin/logout',{method:'POST',body:'{}'});}catch(_){}state.admin=false;state.adminSummary=null;go('admin');}
   }
-  const ivr=e.target.closest('[data-ivr]');if(ivr){const n=Number(ivr.dataset.ivr);const map={1:'booking',2:'manage',3:'reception',4:'care',5:'clinic'};if(n===6){speak(menuText());setVoiceState(menuText());}else{const labels={1:'Book an appointment',2:'Manage an existing appointment',3:'Speak to reception',4:'Request patient follow-up',5:'Clinic information'};speak(labels[n]);setVoiceState(labels[n]+'. Opening the selected service.');go(map[n]);}return;}
+
+
+const ivr=e.target.closest('[data-ivr]');
+if(ivr){
+ const n=Number(ivr.dataset.ivr);
+ const map={1:'booking',2:'manage',3:'reception',4:'clinic'};
+ const labels={
+  1:'Appointment Booking',
+  2:'Existing Appointment Check',
+  3:'Talk to Doctor / Reception',
+  4:'Clinic Information'
+ };
+ if(map[n]){
+  speak(labels[n]);
+  setVoiceState(labels[n]+'. Opening the selected service.');
+  go(map[n]);
+ }
+ return;
+}
+  
+  
   const cancel=e.target.closest('[data-cancel]');if(cancel){const ref=cancel.dataset.cancel;const host=$('#action-'+CSS.escape(ref));host.innerHTML='<div class="field" style="margin-top:12px"><label>Registered mobile number or email to verify this request</label><input id="verify-'+attr(ref)+'" placeholder="Mobile or email"></div><button class="btn btn-danger btn-sm" data-confirm-cancel="'+attr(ref)+'">Confirm cancellation request</button>';return;}
   const reschedule=e.target.closest('[data-reschedule]');if(reschedule){const ref=reschedule.dataset.reschedule;const host=$('#action-'+CSS.escape(ref));host.innerHTML='<div class="form-grid" style="margin-top:12px"><div class="field"><label>Registered mobile or email</label><input id="verify-'+attr(ref)+'" placeholder="Mobile or email"></div><div class="field"><label>New date</label><input id="newdate-'+attr(ref)+'" type="date" min="'+new Date().toISOString().slice(0,10)+'"></div><div class="field"><label>New time</label><select id="newtime-'+attr(ref)+'">'+state.config.appointmentSlots.map(s=>'<option>'+attr(s)+'</option>').join('')+'</select></div></div><button class="btn btn-primary btn-sm" data-confirm-reschedule="'+attr(ref)+'">Submit reschedule request</button>';return;}
   const cc=e.target.closest('[data-confirm-cancel]');if(cc){const ref=cc.dataset.confirmCancel;const value=$('#verify-'+CSS.escape(ref)).value;const payload=value.includes('@')?{email:value}:{phone:value};try{const result=await api('/api/appointments/'+encodeURIComponent(ref)+'/cancel',{method:'POST',body:JSON.stringify(payload)});toast(result.message);go('manage');}catch(err){toast(err.message,'error');}return;}
@@ -844,7 +875,7 @@ function bindNavigation(){
  });
 }
 document.addEventListener('keydown',e=>{
- if(state.page==='voice'&&['1','2','3','4','5','6'].includes(e.key)&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)){
+ if(state.page==='voice'&&['1','2','3','4'].includes(e.key)&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)){
   const b=$('[data-ivr="'+e.key+'"]');if(b)b.click();
  }
  if(e.key==='Escape')$('#sidebar').classList.remove('open');
