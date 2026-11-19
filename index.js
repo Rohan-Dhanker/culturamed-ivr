@@ -948,10 +948,12 @@ app.get('/api/internal/dataverse-schema', async (req, res) => {
 
     if (!authResponse.ok || !authBody.access_token) {
       console.error('Dataverse diagnostic authentication failed:', authResponse.status);
-      return res.status(502).json({
-        error: 'Dataverse authentication failed.',
-        status: authResponse.status
-      });
+     return res.status(502).json({
+  error: 'Dataverse authentication failed.',
+  status: authResponse.status,
+  aadError: authBody.error || null,
+  aadErrorDescription: authBody.error_description || null
+});
     }
 
     const headers = {
