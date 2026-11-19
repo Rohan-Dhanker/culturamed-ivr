@@ -899,6 +899,7 @@ app.get('/', (req, res) => {
   res.type('html').send(HTML);
 });
 
+
 // Exotel Gather / Passthru integration
 const exotelCallSessions = new Map();
 
@@ -918,40 +919,53 @@ app.get('/api/exotel/gather', (req, res) => {
     const callSid = cleanString(req.query.CallSid, 150);
     const stage = cleanString(req.query.stage, 20).toLowerCase();
 
+    // Exotel incoming caller number
+    const callerNumber = cleanString(
+      req.query.CallFrom || req.query.From,
+      30
+    ).replace(/[^\d+]/g, '');
+
+    // Gather input
     const digits = String(req.query.digits || '')
       .replace(/^["']|["']$/g, '')
       .replace(/\D/g, '');
 
-    if (!callSid || !digits) {
+    if (!callSid || !digits || !isPhone(callerNumber)) {
       return res.status(400).type('text').send('Missing call data');
     }
 
-    if (!['mobile', 'date', 'time'].includes(stage)) {
+    if (!['date', 'time', 'mobile'].includes(stage)) {
       return res.status(400).type('text').send('Invalid stage');
-    }
-
-    if (stage === 'mobile' && (digits.length < 10 || digits.length > 15)) {
-      return res.status(400).type('text').send('Invalid mobile number');
     }
 
     if (stage === 'date' && !/^\d{8}$/.test(digits)) {
       return res.status(400).type('text').send('Invalid date');
     }
 
-    if (stage === 'time' && !/^(?:[01]\d|2[0-3])[0-5]\d$/.test(digits)) {
+    if (
+      stage === 'time' &&
+      !/^(?:[01]\d|2[0-3])[0-5]\d$/.test(digits)
+    ) {
       return res.status(400).type('text').send('Invalid time');
     }
 
-    // Remove expired call sessions.
+    if (stage === 'mobile' && (digits.length < 10 || digits.length > 15)) {
+      return res.status(400).type('text').send('Invalid mobile number');
+    }
+
     const now = Date.now();
 
+    // Remove expired sessions
     for (const [id, session] of exotelCallSessions.entries()) {
       if (now - session.updatedAt > 30 * 60 * 1000) {
         exotelCallSessions.delete(id);
       }
     }
 
-    if (!exotelCallSessions.has(callSid) && exotelCallSessions.size >= 2000) {
+    if (
+      !exotelCallSessions.has(callSid) &&
+      exotelCallSessions.size >= 2000
+    ) {
       return res.status(503).type('text').send('Call capacity reached');
     }
 
@@ -963,13 +977,23 @@ app.get('/api/exotel/gather', (req, res) => {
       createdAt: now
     };
 
+    // Save caller number from incoming call
+    session.mobile = callerNumber;
+
+    // Save Gather input according to stage
     session[stage] = digits;
     session.updatedAt = now;
 
     exotelCallSessions.set(callSid, session);
 
-    // Temporary acknowledgement. Dataverse booking is added
-    // after the actual patient and appointment fields are verified.
+    console.log('Exotel input received:', {
+      callSid,
+      stage,
+      hasCallerNumber: Boolean(session.mobile),
+      hasDate: Boolean(session.date),
+      hasTime: Boolean(session.time)
+    });
+
     return res.status(200).type('text').send('OK');
 
   } catch (error) {
@@ -977,6 +1001,7 @@ app.get('/api/exotel/gather', (req, res) => {
     return res.status(500).type('text').send('Internal error');
   }
 });
+
 
 app.use((req, res) => {
   res.status(404).json({ error: 'Route not found.' });
