@@ -900,6 +900,150 @@ app.get('/', (req, res) => {
 });
 
 
+
+// Temporary read-only Dataverse appointment metadata diagnostic
+app.get('/api/internal/dataverse-schema', async (req, res) => {
+  try {
+    const expectedToken = process.env.EXOTEL_WEBHOOK_TOKEN || '';
+    const suppliedToken = String(req.headers['x-diagnostics-token'] || '');
+
+    if (!expectedToken || !suppliedToken || !safeEqual(expectedToken, suppliedToken)) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const tenantId = process.env.DATAVERSE_TENANT_ID || '';
+    const clientId = process.env.DATAVERSE_CLIENT_ID || '';
+    const clientSecret = process.env.DATAVERSE_CLIENT_SECRET || '';
+    const dataverseUrl = (process.env.DATAVERSE_URL || '').replace(/\/$/, '');
+
+    if (!tenantId || !clientId || !clientSecret || !dataverseUrl) {
+      return res.status(503).json({
+        error: 'Dataverse environment variables are incomplete.',
+        configured: {
+          tenantId: Boolean(tenantId),
+          clientId: Boolean(clientId),
+          clientSecret: Boolean(clientSecret),
+          dataverseUrl: Boolean(dataverseUrl)
+        }
+      });
+    }
+
+    const authResponse = await fetch(
+      'https://login.microsoftonline.com/' +
+        encodeURIComponent(tenantId) +
+        '/oauth2/v2.0/token',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'client_credentials',
+          client_id: clientId,
+          client_secret: clientSecret,
+          scope: dataverseUrl + '/.default'
+        })
+      }
+    );
+
+    const authBody = await authResponse.json();
+
+    if (!authResponse.ok || !authBody.access_token) {
+      console.error('Dataverse diagnostic authentication failed:', authResponse.status);
+      return res.status(502).json({
+        error: 'Dataverse authentication failed.',
+        status: authResponse.status
+      });
+    }
+
+    const headers = {
+      Authorization: 'Bearer ' + authBody.access_token,
+      Accept: 'application/json',
+      'OData-Version': '4.0',
+      'OData-MaxVersion': '4.0'
+    };
+
+    async function readMetadata(path) {
+      const response = await fetch(
+        dataverseUrl + '/api/data/v9.2/' + path,
+        { headers }
+      );
+
+      const body = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          'Metadata request failed (' + response.status + '): ' +
+          (body.error?.message || 'Unknown Dataverse error')
+        );
+      }
+
+      return body;
+    }
+
+    const entityPath =
+      "EntityDefinitions(LogicalName='msemr_appointmentemr')";
+
+    const [attributes, lookups] = await Promise.all([
+      readMetadata(
+        entityPath +
+        "/Attributes?$select=LogicalName,SchemaName,AttributeType,IsValidForCreate,RequiredLevel,DisplayName"
+      ),
+      readMetadata(
+        entityPath +
+        "/Attributes/Microsoft.Dynamics.CRM.LookupAttributeMetadata?$select=LogicalName,SchemaName,Targets,IsValidForCreate,RequiredLevel"
+      )
+    ]);
+
+    const relevantNames = new Set([
+      'subject',
+      'description',
+      'scheduledstart',
+      'scheduledend',
+      'msemr_starttime',
+      'msemr_appointmentstatus',
+      'msemr_actorpatient',
+      'msemr_actorpractitioner',
+      'msemr_actorlocation'
+    ]);
+
+    const fields = (attributes.value || [])
+      .filter(field => relevantNames.has(field.LogicalName))
+      .map(field => ({
+        logicalName: field.LogicalName,
+        schemaName: field.SchemaName,
+        type: field.AttributeType,
+        validForCreate: field.IsValidForCreate,
+        requiredLevel: field.RequiredLevel?.Value || null,
+        displayName:
+          field.DisplayName?.UserLocalizedLabel?.Label || null
+      }));
+
+    const lookupFields = (lookups.value || []).map(field => ({
+      logicalName: field.LogicalName,
+      schemaName: field.SchemaName,
+      targets: field.Targets || [],
+      validForCreate: field.IsValidForCreate,
+      requiredLevel: field.RequiredLevel?.Value || null
+    }));
+
+    console.log('Dataverse appointment metadata diagnostic completed.');
+
+    return res.json({
+      entity: 'msemr_appointmentemr',
+      fields,
+      lookups: lookupFields
+    });
+
+  } catch (error) {
+    console.error('Dataverse metadata diagnostic error:', error.message);
+    return res.status(500).json({
+      error: 'Could not read appointment metadata.',
+      details: error.message
+    });
+  }
+});
+
+
+
 // Exotel Gather / Passthru integration
 const exotelCallSessions = new Map();
 
