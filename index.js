@@ -893,17 +893,95 @@ init();
 </body>
 </html>`;
 
+
+
 app.get('/', (req, res) => {
   res.type('html').send(HTML);
 });
+
+// Exotel Gather / Passthru integration
+const exotelCallSessions = new Map();
+
+app.get('/api/exotel/gather', (req, res) => {
+  try {
+    const expectedToken = process.env.EXOTEL_WEBHOOK_TOKEN || '';
+    const suppliedToken = String(req.query.key || '');
+
+    if (
+      !expectedToken ||
+      !suppliedToken ||
+      !safeEqual(expectedToken, suppliedToken)
+    ) {
+      return res.status(401).type('text').send('Unauthorized');
+    }
+
+    const callSid = cleanString(req.query.CallSid, 150);
+    const stage = cleanString(req.query.stage, 20).toLowerCase();
+
+    const digits = String(req.query.digits || '')
+      .replace(/^["']|["']$/g, '')
+      .replace(/\D/g, '');
+
+    if (!callSid || !digits) {
+      return res.status(400).type('text').send('Missing call data');
+    }
+
+    if (!['mobile', 'date', 'time'].includes(stage)) {
+      return res.status(400).type('text').send('Invalid stage');
+    }
+
+    if (stage === 'mobile' && (digits.length < 10 || digits.length > 15)) {
+      return res.status(400).type('text').send('Invalid mobile number');
+    }
+
+    if (stage === 'date' && !/^\d{8}$/.test(digits)) {
+      return res.status(400).type('text').send('Invalid date');
+    }
+
+    if (stage === 'time' && !/^(?:[01]\d|2[0-3])[0-5]\d$/.test(digits)) {
+      return res.status(400).type('text').send('Invalid time');
+    }
+
+    // Remove expired call sessions.
+    const now = Date.now();
+
+    for (const [id, session] of exotelCallSessions.entries()) {
+      if (now - session.updatedAt > 30 * 60 * 1000) {
+        exotelCallSessions.delete(id);
+      }
+    }
+
+    if (!exotelCallSessions.has(callSid) && exotelCallSessions.size >= 2000) {
+      return res.status(503).type('text').send('Call capacity reached');
+    }
+
+    const session = exotelCallSessions.get(callSid) || {
+      callSid,
+      mobile: '',
+      date: '',
+      time: '',
+      createdAt: now
+    };
+
+    session[stage] = digits;
+    session.updatedAt = now;
+
+    exotelCallSessions.set(callSid, session);
+
+    // Temporary acknowledgement. Dataverse booking is added
+    // after the actual patient and appointment fields are verified.
+    return res.status(200).type('text').send('OK');
+
+  } catch (error) {
+    console.error('Exotel Gather webhook error:', error.message);
+    return res.status(500).type('text').send('Internal error');
+  }
+});
+
 app.use((req, res) => {
   res.status(404).json({ error: 'Route not found.' });
 });
-app.use((err, req, res, next) => {
-  if (res.headersSent) return next(err);
-  const status = err.status === 413 ? 413 : 500;
-  res.status(status).json({ error: status === 413 ? 'Request payload is too large.' : 'An unexpected server error occurred.' });
-});
+
 
 const server = app.listen(PORT, () => {
   console.log(`CulturaMed Healthcare is running on port ${PORT}`);
