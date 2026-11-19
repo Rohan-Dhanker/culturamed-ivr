@@ -984,16 +984,28 @@ app.get('/api/internal/dataverse-schema', async (req, res) => {
     const entityPath =
       "EntityDefinitions(LogicalName='msemr_appointmentemr')";
 
-    const [attributes, lookups] = await Promise.all([
-      readMetadata(
-        entityPath +
-        "/Attributes?$select=LogicalName,SchemaName,AttributeType,IsValidForCreate,RequiredLevel,DisplayName"
-      ),
-      readMetadata(
-        entityPath +
-        "/Attributes/Microsoft.Dynamics.CRM.LookupAttributeMetadata?$select=LogicalName,SchemaName,Targets,IsValidForCreate,RequiredLevel"
-      )
-    ]);
+const [attributes, lookups, relationships, statusMetadata] =
+  await Promise.all([
+    readMetadata(
+      entityPath +
+      "/Attributes?$select=LogicalName,SchemaName,AttributeType,IsValidForCreate,RequiredLevel,DisplayName"
+    ),
+
+    readMetadata(
+      entityPath +
+      "/Attributes/Microsoft.Dynamics.CRM.LookupAttributeMetadata?$select=LogicalName,SchemaName,Targets,IsValidForCreate,RequiredLevel"
+    ),
+
+    readMetadata(
+      entityPath +
+      "/ManyToOneRelationships?$select=SchemaName,ReferencingAttribute,ReferencedEntity,ReferencingEntityNavigationPropertyName,ReferencedEntityNavigationPropertyName"
+    ),
+
+    readMetadata(
+      entityPath +
+      "/Attributes(LogicalName='msemr_appointmentstatus')/Microsoft.Dynamics.CRM.PicklistAttributeMetadata?$select=LogicalName&$expand=OptionSet($select=Options)"
+    )
+  ]);
 
     const relevantNames = new Set([
       'subject',
@@ -1029,11 +1041,37 @@ app.get('/api/internal/dataverse-schema', async (req, res) => {
 
     console.log('Dataverse appointment metadata diagnostic completed.');
 
+    const requiredLookups = new Set([
+  'msemr_actorpatient',
+  'msemr_actorpractitioner',
+  'msemr_actorlocation'
+]);
+
+const navigationProperties = (relationships.value || [])
+  .filter(item =>
+    requiredLookups.has(item.ReferencingAttribute)
+  )
+  .map(item => ({
+    attribute: item.ReferencingAttribute,
+    targetEntity: item.ReferencedEntity,
+    navigationProperty:
+      item.ReferencingEntityNavigationPropertyName
+  }));
+
+const appointmentStatusOptions =
+  (statusMetadata.OptionSet?.Options || []).map(option => ({
+    value: option.Value,
+    label:
+      option.Label?.UserLocalizedLabel?.Label || null
+  }));
+    
     return res.json({
-      entity: 'msemr_appointmentemr',
-      fields,
-      lookups: lookupFields
-    });
+  entity: 'msemr_appointmentemr',
+  fields,
+  lookups: lookupFields,
+  navigationProperties,
+  appointmentStatusOptions
+});
 
   } catch (error) {
     console.error('Dataverse metadata diagnostic error:', error.message);
