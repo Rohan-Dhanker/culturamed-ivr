@@ -1487,6 +1487,145 @@ app.use((req, res) => {
 });
 
 
+app.get('/api/internal/scheduling-diagnostic', async (req, res) => {
+  try {
+    const expectedToken = process.env.EXOTEL_WEBHOOK_TOKEN || '';
+    const suppliedToken = String(req.headers['x-diagnostics-token'] || '');
+
+    if (!expectedToken || !suppliedToken ||
+        !safeEqual(expectedToken, suppliedToken)) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const tenantId = process.env.DATAVERSE_TENANT_ID;
+    const clientId = process.env.DATAVERSE_CLIENT_ID;
+    const clientSecret = process.env.DATAVERSE_CLIENT_SECRET;
+    const dataverseUrl = (process.env.DATAVERSE_URL || '').replace(/\/$/, '');
+
+    if (!tenantId || !clientId || !clientSecret || !dataverseUrl) {
+      return res.status(503).json({
+        error: 'Dataverse configuration is incomplete.'
+      });
+    }
+
+    const authResponse = await fetch(
+      `https://login.microsoftonline.com/${encodeURIComponent(tenantId)}/oauth2/v2.0/token`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: new URLSearchParams({
+          grant_type: 'client_credentials',
+          client_id: clientId,
+          client_secret: clientSecret,
+          scope: `${dataverseUrl}/.default`
+        })
+      }
+    );
+
+    const authData = await authResponse.json();
+
+    if (!authResponse.ok || !authData.access_token) {
+      return res.status(502).json({
+        error: 'Dataverse authentication failed.'
+      });
+    }
+
+    const headers = {
+      Authorization: `Bearer ${authData.access_token}`,
+      Accept: 'application/json',
+      'OData-Version': '4.0',
+      'OData-MaxVersion': '4.0'
+    };
+
+    const tables = [
+      'msemr_slot',
+      'bookableresourcebooking',
+      'bookableresourcebookingheader',
+      'bookableresource',
+      'bookableresourcecategory',
+      'bookableresourcecharacteristic',
+      'bookableresourcebookingstatus',
+      'msdyn_workhourtemplate',
+      'msemr_appointmentemr'
+    ];
+
+    const results = await Promise.all(tables.map(async (table) => {
+      try {
+        const metadataUrl =
+          `${dataverseUrl}/api/data/v9.2/EntityDefinitions(LogicalName='${table}')` +
+          `?$select=LogicalName,EntitySetName,PrimaryIdAttribute,PrimaryNameAttribute` +
+          `&$expand=Attributes($select=LogicalName,AttributeType)`;
+
+        const metadataResponse = await fetch(metadataUrl, { headers });
+        const metadata = await metadataResponse.json();
+
+        if (!metadataResponse.ok) {
+          return {
+            table,
+            available: false,
+            error: metadata.error?.message || 'Metadata lookup failed'
+          };
+        }
+
+        const columns = (metadata.Attributes || []).map(a => ({
+          name: a.LogicalName,
+          type: a.AttributeType
+        }));
+
+        const relevantColumns = columns.filter(c =>
+          /start|end|time|date|duration|status|resource|practitioner|location|slot|capacity|schedule|workhour|calendar|name|specialty/i.test(c.name)
+        );
+
+        const countUrl =
+          `${dataverseUrl}/api/data/v9.2/${metadata.EntitySetName}?$top=1&$select=${metadata.PrimaryIdAttribute}&$count=true`;
+
+        const countResponse = await fetch(countUrl, {
+          headers: {
+            ...headers,
+            Prefer: 'odata.maxpagesize=1'
+          }
+        });
+
+        const countData = await countResponse.json();
+
+        return {
+          table,
+          available: true,
+          entitySetName: metadata.EntitySetName,
+          primaryId: metadata.PrimaryIdAttribute,
+          primaryName: metadata.PrimaryNameAttribute,
+          recordCount: countResponse.ok
+            ? (countData['@odata.count'] ?? null)
+            : null,
+          countError: countResponse.ok
+            ? null
+            : (countData.error?.message || 'Count unavailable'),
+          relevantColumns
+        };
+      } catch (error) {
+        return {
+          table,
+          error: error.message
+        };
+      }
+    }));
+
+    return res.json({
+      success: true,
+      checkedTables: tables.length,
+      results
+    });
+
+  } catch (error) {
+    console.error('Scheduling diagnostic error:', error.message);
+    return res.status(500).json({
+      error: 'Scheduling diagnostic failed.'
+    });
+  }
+});
+
 const server = app.listen(PORT, () => {
   console.log(`CulturaMed Healthcare is running on port ${PORT}`);
   if (!ADMIN_PASSWORD) console.warn('ADMIN_PASSWORD is not configured; administrative sign-in is disabled.');
