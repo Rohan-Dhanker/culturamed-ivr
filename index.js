@@ -1482,10 +1482,6 @@ app.get('/api/exotel/gather', (req, res) => {
 });
 
 
-app.use((req, res) => {
-  res.status(404).json({ error: 'Route not found.' });
-});
-
 
 app.get('/api/internal/scheduling-diagnostic', async (req, res) => {
   try {
@@ -1625,6 +1621,15 @@ app.get('/api/internal/scheduling-diagnostic', async (req, res) => {
     });
   }
 });
+
+
+
+app.use((req, res) => {
+  res.status(404).json({ error: 'Route not found.' });
+});
+
+
+
 
 const server = app.listen(PORT, () => {
   console.log(`CulturaMed Healthcare is running on port ${PORT}`);
