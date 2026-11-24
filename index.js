@@ -1084,6 +1084,143 @@ const appointmentStatusOptions =
 
 
 
+// Dataverse Patient Search API - Read Only
+app.get('/api/ivr/patient-search', async (req, res) => {
+  try {
+    // Secure this endpoint using the existing server token
+    const expectedToken = process.env.EXOTEL_WEBHOOK_TOKEN || '';
+    const suppliedToken = String(req.headers['x-diagnostics-token'] || '');
+
+    if (
+      !expectedToken ||
+      !suppliedToken ||
+      !safeEqual(expectedToken, suppliedToken)
+    ) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const phone = String(req.query.phone || '').replace(/\D/g, '');
+
+    if (phone.length < 10 || phone.length > 15) {
+      return res.status(400).json({
+        error: 'A valid patient mobile number is required.'
+      });
+    }
+
+    const tenantId = process.env.DATAVERSE_TENANT_ID || '';
+    const clientId = process.env.DATAVERSE_CLIENT_ID || '';
+    const clientSecret = process.env.DATAVERSE_CLIENT_SECRET || '';
+    const dataverseUrl = (process.env.DATAVERSE_URL || '').replace(/\/$/, '');
+
+    if (!tenantId || !clientId || !clientSecret || !dataverseUrl) {
+      return res.status(503).json({
+        error: 'Dataverse configuration is incomplete.'
+      });
+    }
+
+    // Get Microsoft Entra access token
+    const authResponse = await fetch(
+      'https://login.microsoftonline.com/' +
+        encodeURIComponent(tenantId) +
+        '/oauth2/v2.0/token',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: new URLSearchParams({
+          grant_type: 'client_credentials',
+          client_id: clientId,
+          client_secret: clientSecret,
+          scope: dataverseUrl + '/.default'
+        })
+      }
+    );
+
+    const authBody = await authResponse.json();
+
+    if (!authResponse.ok || !authBody.access_token) {
+      console.error('Patient search authentication failed:', authResponse.status);
+      return res.status(502).json({
+        error: 'Dataverse authentication failed.'
+      });
+    }
+
+    // Match using the last 10 digits to tolerate country-code prefixes.
+    const lastTenDigits = phone.slice(-10);
+
+    const filter =
+      "msemr_contacttype eq 935000000 and statecode eq 0 and " +
+      "endswith(mobilephone,'" + lastTenDigits + "')";
+
+    const url = new URL(dataverseUrl + '/api/data/v9.2/contacts');
+    url.searchParams.set(
+      '$select',
+      'contactid,fullname,msemr_medicalrecordnumber,mobilephone,birthdate'
+    );
+    url.searchParams.set('$filter', filter);
+    url.searchParams.set('$top', '5');
+
+    const patientResponse = await fetch(url.toString(), {
+      headers: {
+        Authorization: 'Bearer ' + authBody.access_token,
+        Accept: 'application/json',
+        'OData-Version': '4.0',
+        'OData-MaxVersion': '4.0'
+      }
+    });
+
+    const patientBody = await patientResponse.json();
+
+    if (!patientResponse.ok) {
+      console.error(
+        'Dataverse patient search failed:',
+        patientResponse.status,
+        patientBody.error?.message
+      );
+
+      return res.status(502).json({
+        error: 'Could not search patient records.'
+      });
+    }
+
+    const matches = patientBody.value || [];
+
+    // Do not disclose patient details before identity verification.
+    if (matches.length === 0) {
+      return res.json({
+        found: false,
+        message: 'No active patient record found for this mobile number.'
+      });
+    }
+
+    if (matches.length > 1) {
+      return res.json({
+        found: true,
+        multipleMatches: true,
+        message: 'Multiple patient records found. Additional verification is required.'
+      });
+    }
+
+    return res.json({
+      found: true,
+      multipleMatches: false,
+      verificationRequired: true,
+      patientId: matches[0].contactid,
+      message: 'Patient record found. Verify date of birth before proceeding.'
+    });
+
+  } catch (error) {
+    console.error('Patient search API error:', error.message);
+
+    return res.status(500).json({
+      error: 'Internal patient search error.'
+    });
+  }
+});
+
+
+
 // Exotel Gather / Passthru integration
 const exotelCallSessions = new Map();
 
