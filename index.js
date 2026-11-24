@@ -1221,6 +1221,164 @@ app.get('/api/ivr/patient-search', async (req, res) => {
 
 
 
+// Dataverse Patient DOB Verification API
+app.post('/api/ivr/patient-verify', async (req, res) => {
+  try {
+    // Authenticate internal IVR request
+    const expectedToken = process.env.EXOTEL_WEBHOOK_TOKEN || '';
+    const suppliedToken = String(req.headers['x-diagnostics-token'] || '');
+
+    if (
+      !expectedToken ||
+      !suppliedToken ||
+      !safeEqual(expectedToken, suppliedToken)
+    ) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const body = req.body || {};
+    const patientId = String(body.patientId || '').trim();
+    const dob = String(body.dob || '').trim();
+
+    // Validate Dataverse Contact GUID
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(patientId)) {
+      return res.status(400).json({
+        error: 'Invalid patient ID.'
+      });
+    }
+
+    // Validate DOB format and calendar date
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dob)) {
+      return res.status(400).json({
+        error: 'DOB must be in YYYY-MM-DD format.'
+      });
+    }
+
+    const parsedDob = new Date(dob + 'T00:00:00.000Z');
+
+    if (
+      Number.isNaN(parsedDob.getTime()) ||
+      parsedDob.toISOString().slice(0, 10) !== dob ||
+      parsedDob > new Date()
+    ) {
+      return res.status(400).json({
+        error: 'Invalid date of birth.'
+      });
+    }
+
+    const tenantId = process.env.DATAVERSE_TENANT_ID || '';
+    const clientId = process.env.DATAVERSE_CLIENT_ID || '';
+    const clientSecret = process.env.DATAVERSE_CLIENT_SECRET || '';
+    const dataverseUrl = (process.env.DATAVERSE_URL || '').replace(/\/$/, '');
+
+    if (!tenantId || !clientId || !clientSecret || !dataverseUrl) {
+      return res.status(503).json({
+        error: 'Dataverse configuration is incomplete.'
+      });
+    }
+
+    // Get Microsoft Entra access token
+    const authResponse = await fetch(
+      'https://login.microsoftonline.com/' +
+        encodeURIComponent(tenantId) +
+        '/oauth2/v2.0/token',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: new URLSearchParams({
+          grant_type: 'client_credentials',
+          client_id: clientId,
+          client_secret: clientSecret,
+          scope: dataverseUrl + '/.default'
+        })
+      }
+    );
+
+    const authBody = await authResponse.json();
+
+    if (!authResponse.ok || !authBody.access_token) {
+      console.error('DOB verification authentication failed:', authResponse.status);
+      return res.status(502).json({
+        error: 'Dataverse authentication failed.'
+      });
+    }
+
+    // Read only the required fields from the patient record
+    const patientUrl =
+      dataverseUrl +
+      '/api/data/v9.2/contacts(' +
+      patientId +
+      ')?$select=birthdate,msemr_contacttype,statecode';
+
+    const patientResponse = await fetch(patientUrl, {
+      headers: {
+        Authorization: 'Bearer ' + authBody.access_token,
+        Accept: 'application/json',
+        'OData-Version': '4.0',
+        'OData-MaxVersion': '4.0'
+      }
+    });
+
+    if (patientResponse.status === 404) {
+      return res.status(404).json({
+        verified: false,
+        message: 'Patient record not found.'
+      });
+    }
+
+    const patient = await patientResponse.json();
+
+    if (!patientResponse.ok) {
+      console.error(
+        'Dataverse DOB lookup failed:',
+        patientResponse.status,
+        patient.error?.message
+      );
+
+      return res.status(502).json({
+        error: 'Could not verify patient details.'
+      });
+    }
+
+    // Ensure the record is an active Patient
+    if (
+      patient.statecode !== 0 ||
+      patient.msemr_contacttype !== 935000000
+    ) {
+      return res.status(404).json({
+        verified: false,
+        message: 'Active patient record not found.'
+      });
+    }
+
+    const actualDob = String(patient.birthdate || '').slice(0, 10);
+
+    if (!actualDob || actualDob !== dob) {
+      return res.json({
+        verified: false,
+        message: 'Date of birth does not match.'
+      });
+    }
+
+    return res.json({
+      verified: true,
+      patientId: patientId,
+      message: 'Patient identity verified successfully.'
+    });
+
+  } catch (error) {
+    console.error('Patient DOB verification error:', error.message);
+
+    return res.status(500).json({
+      error: 'Internal patient verification error.'
+    });
+  }
+});
+
+
+
 // Exotel Gather / Passthru integration
 const exotelCallSessions = new Map();
 
